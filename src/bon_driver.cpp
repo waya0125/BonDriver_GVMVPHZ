@@ -201,7 +201,14 @@ const BOOL BonDriverGVMVPHZ::SetChannel(const DWORD dwSpace, const DWORD dwChann
     }
     cur_channel_ = dwChannel;
 
-    client_->PrepareStreamUnit();
+    // Do not start TS streaming when the channel did not lock (speeds up channel scan
+    // and avoids unnecessary USB pipe start/stop cycles on empty channels).
+    if (!locked) {
+        return TRUE;
+    }
+
+    client_->SetState(8, saa7164::kStateAcquire);
+    client_->SetState(8, saa7164::kStatePause);
     if (!usb_.StartBulkStream(kStreamEndpoint, kUrbCount, kUrbSize,
                               [this](const uint8_t *data, size_t len) { OnRawChunk(data, len); })) {
         return FALSE;
