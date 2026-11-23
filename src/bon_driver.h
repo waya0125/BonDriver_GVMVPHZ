@@ -47,6 +47,7 @@ public:
 private:
     std::wstring ResolveFirmwarePath() const;
     void StopStreamLocked();
+    void CloseTunerLocked();
     void OnRawChunk(const uint8_t *data, size_t len);
 
     HMODULE hmodule_ = nullptr;

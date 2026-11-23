@@ -126,7 +126,7 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
     bool locked = false;
     if (!saigawa::ReadLock(client_.get(), &r80, &rb0, &locked)) {
         if (!saigawa::Init(client_.get())) {
-            CloseTuner();
+            CloseTunerLocked();
             return FALSE;
         }
         client_->InitInternalBCAS();
@@ -138,14 +138,14 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
     if (!ivdrm::RunAuth(client_.get(), 0, &session_key_)) {
         session_id_ = 1;
         if (!ivdrm::RunAuth(client_.get(), 1, &session_key_)) {
-            CloseTuner();
+            CloseTunerLocked();
             return FALSE;
         }
     }
 
     if (!watchdog_.Start(client_.get(), session_key_)) {
         ivdrm::CloseSession(client_.get(), session_id_);
-        CloseTuner();
+        CloseTunerLocked();
         return FALSE;
     }
 
@@ -165,8 +165,7 @@ void BonDriverGVMVPHZ::StopStreamLocked() {
     streaming_ = false;
 }
 
-void BonDriverGVMVPHZ::CloseTuner(void) {
-    std::lock_guard<std::mutex> lk(api_mu_);
+void BonDriverGVMVPHZ::CloseTunerLocked() {
     StopStreamLocked();
     watchdog_.Stop();
     if (client_ && is_open_) {
@@ -177,6 +176,11 @@ void BonDriverGVMVPHZ::CloseTuner(void) {
     usb_.Close();
     is_open_ = false;
     PurgeTsStream();
+}
+
+void BonDriverGVMVPHZ::CloseTuner(void) {
+    std::lock_guard<std::mutex> lk(api_mu_);
+    CloseTunerLocked();
 }
 
 const BOOL BonDriverGVMVPHZ::SetChannel(const BYTE bCh) {
