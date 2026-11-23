@@ -227,11 +227,17 @@ const DWORD BonDriverGVMVPHZ::GetCurChannel(void) {
 const float BonDriverGVMVPHZ::GetSignalLevel(void) {
     std::lock_guard<std::mutex> lk(api_mu_);
     if (!is_open_ || !client_) return 0.0f;
+    uint8_t r80 = 0, rb0 = 0;
+    bool locked = false;
+    if (!saigawa::ReadLock(client_.get(), &r80, &rb0, &locked) || !locked) {
+        return 0.0f;
+    }
     uint8_t strength = 0;
     if (!saigawa::ReadSignalStrength(client_.get(), &strength)) {
         return 0.0f;
     }
-    return static_cast<float>(strength) * (35.0f / 255.0f);
+    // reg 0x94 behaves inversely (smaller value = stronger signal / lower AGC gain).
+    return static_cast<float>(255 - strength) * (35.0f / 255.0f);
 }
 
 void BonDriverGVMVPHZ::OnRawChunk(const uint8_t *data, size_t len) {
