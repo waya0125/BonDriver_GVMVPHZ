@@ -33,6 +33,7 @@ jobs:
           $dir = "BonDriver_GVMVPHZ-${{ matrix.arch }}"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item "build-${{ matrix.arch }}\Release\BonDriver_GVMVPHZ.dll" "$dir\"
+          Copy-Item "build-${{ matrix.arch }}\Release\bon_test.exe" "$dir\"
           Copy-Item "README.md", "LICENSE" "$dir\"
           Compress-Archive -Path "$dir\*" -DestinationPath "$dir.zip" -Force
 

@@ -37,3 +37,11 @@ set_target_properties(BonDriver_GVMVPHZ PROPERTIES
     PREFIX ""
     OUTPUT_NAME "BonDriver_GVMVPHZ"
 )
+
+add_executable(bon_test tests/bon_test.cpp)
+target_compile_definitions(bon_test PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(bon_test PRIVATE /W4 /utf-8)
+else()
+    target_compile_options(bon_test PRIVATE -Wall -Wextra)
+endif()
