@@ -1,0 +1,43 @@
+name: Build BonDriver_GVMVPHZ
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+          - arch: x86
+            cmake_arch: Win32
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake (${{ matrix.arch }})
+        run: cmake -B build-${{ matrix.arch }} -A ${{ matrix.cmake_arch }}
+
+      - name: Build (${{ matrix.arch }})
+        run: cmake --build build-${{ matrix.arch }} --config Release
+
+      - name: Package (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $dir = "BonDriver_GVMVPHZ-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "build-${{ matrix.arch }}\Release\BonDriver_GVMVPHZ.dll" "$dir\"
+          Copy-Item "README.md", "LICENSE" "$dir\"
+          Compress-Archive -Path "$dir\*" -DestinationPath "$dir.zip" -Force
+
+      - name: Upload artifact (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: BonDriver_GVMVPHZ-${{ matrix.arch }}
+          path: BonDriver_GVMVPHZ-${{ matrix.arch }}.zip
