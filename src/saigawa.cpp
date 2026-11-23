@@ -230,8 +230,8 @@ bool TuneISDBT(saa7164::Client *c, uint32_t freq_hz, bool *locked_out) {
     if (!WriteTuner(c, 0x09, 0xf3)) return false;
     if (!WriteDemod(c, 0x01, 0x40)) return false;
 
-    for (int i = 0; i < 20; ++i) {
-        SleepMs(150);
+    for (int i = 0; i < 10; ++i) {
+        SleepMs(100);
         uint8_t r80 = 0, rb0 = 0;
         bool locked = false;
         if (ReadLock(c, &r80, &rb0, &locked) && locked) {

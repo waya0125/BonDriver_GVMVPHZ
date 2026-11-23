@@ -193,7 +193,6 @@ const BOOL BonDriverGVMVPHZ::SetChannel(const DWORD dwSpace, const DWORD dwChann
         return FALSE;
     }
 
-    StopStreamLocked();
     PurgeTsStream();
     if (decryptor_) decryptor_->Reset();
 
@@ -204,25 +203,20 @@ const BOOL BonDriverGVMVPHZ::SetChannel(const DWORD dwSpace, const DWORD dwChann
         return FALSE;
     }
     cur_channel_ = dwChannel;
+    PurgeTsStream();
 
-    // Do not start TS streaming when the channel did not lock (speeds up channel scan
-    // and avoids unnecessary USB pipe start/stop cycles on empty channels).
-    if (!locked) {
-        return TRUE;
+    if (!streaming_) {
+        if (!usb_.StartBulkStream(kStreamEndpoint, kUrbCount, kUrbSize,
+                                  [this](const uint8_t *data, size_t len) { OnRawChunk(data, len); })) {
+            return FALSE;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        if (!client_->SetState(8, saa7164::kStateRun)) {
+            usb_.StopBulkStream();
+            return FALSE;
+        }
+        streaming_ = true;
     }
-
-    client_->SetState(8, saa7164::kStateAcquire);
-    client_->SetState(8, saa7164::kStatePause);
-    if (!usb_.StartBulkStream(kStreamEndpoint, kUrbCount, kUrbSize,
-                              [this](const uint8_t *data, size_t len) { OnRawChunk(data, len); })) {
-        return FALSE;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    if (!client_->SetState(8, saa7164::kStateRun)) {
-        usb_.StopBulkStream();
-        return FALSE;
-    }
-    streaming_ = true;
     return TRUE;
 }
 
