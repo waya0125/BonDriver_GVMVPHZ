@@ -8,7 +8,7 @@ WinUSB で機器を直接操作するので、純正ドライバーは不要で�
 
 | 機種 | USB ID | 放送波 | B-CAS | 対応 Windows | 詳細・動作確認 |
 |---|---|---|---|---|---|
-| I-O DATA GV-MVP/HZ | `04bb:0522` | 地デジ（1 チューナー） | 本体のスロット | 10・11（x64・x86） | [docs/GV-MVP-HZ.md](docs/GV-MVP-HZ.md) |
+| I-O DATA GV-MVP/HZ | `04bb:0522` | 地デジ（1 チューナー） | 本体のスロット | 11（x64 で実機確認済み。10・x86 はビルド確認のみ） | [docs/GV-MVP-HZ.md](docs/GV-MVP-HZ.md) |
 
 ## 関連プロジェクト
 

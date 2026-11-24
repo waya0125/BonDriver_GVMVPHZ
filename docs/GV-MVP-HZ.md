@@ -8,7 +8,7 @@
 | 放送波 | 地デジ |
 | チューナー数 | 1 |
 | B-CAS | 本体のスロット（本体で復号するので、外付けのカードリーダー・`B25Decoder` は不要） |
-| 対応 Windows | 10・11（x64・x86） |
+| 対応 Windows | 11（x64 で実機確認済み。10・x86 はビルド確認のみ） |
 | Windows | [BonDriver_GVMVPHZ](../README.md) |
 | Linux | [recgvmvp](https://github.com/waya0125/recgvmvp) |
 | 公式ページ | [製品ページ](https://www.iodata.jp/product/av/tidegi/gv-mvphz/)・[サポートライブラリ](https://www.iodata.jp/lib/product/g/2095.htm) |
@@ -34,10 +34,13 @@ bon_test.exe BonDriver_GVMVPHZ.dll 25 5 out.ts
 
 ## 4. 動作確認の記録
 
+2026-11-24 時点の記録です。
+
 | 確かめたこと | 環境 | 結果 |
 |---|---|---|
-| TVTest での視聴 | 【未記入】 | 【未記入】 |
-| `bon_test.exe` での受信 | 【未記入】 | 【未記入】 |
+| TVTest でのチャンネルスキャン・視聴 | Windows 11（x64、Proxmox VM・USB パススルー、Zadig WinUSB） | NHK 総合 1（1440×1080）を視聴確認（`D 0 / E 0 / S 0`、`32.80 dB / 16.60 Mbps`） |
+| `bon_test.exe` での受信（コールド / Boot2 DFU からの自動ファーム転送、UHF 25ch・5 秒） | 同上 | `10,574,248` バイト、`56,246` パケット（`sync=56246`、`tei=0`、`scrambled=0`） |
+| `bon_test.exe` での受信（ウォーム再オープン、UHF 25ch・3 秒） | 同上 | `6,302,512` バイト、`33,524` パケット（`sync=33524`、`tei=0`、`scrambled=0`、`SignalLevel=30.61〜35.00 dB`） |
 
 ## 5. 注意事項
 
