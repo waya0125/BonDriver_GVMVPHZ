@@ -18,6 +18,32 @@ namespace gvmvphz {
 // DeviceIndex value meaning "open the first device that is not in use".
 constexpr int kDeviceIndexAuto = -1;
 
+// Parses the INI DeviceIndex value (read with GetPrivateProfileStringW).
+//   leading / trailing spaces and tabs are ignored
+//   "-1" (or any negative number) -> kDeviceIndexAuto
+//   "0", "1", ...                  -> that index
+//   empty / invalid / too large    -> fallback
+inline int ParseDeviceIndex(const std::wstring &text, int fallback) {
+    size_t b = 0, e = text.size();
+    while (b < e && (text[b] == L' ' || text[b] == L'\t')) ++b;
+    while (e > b && (text[e - 1] == L' ' || text[e - 1] == L'\t')) --e;
+    if (b == e) return fallback;
+    bool neg = false;
+    if (text[b] == L'+' || text[b] == L'-') {
+        neg = (text[b] == L'-');
+        ++b;
+    }
+    if (b == e) return fallback;
+    long long v = 0;
+    for (size_t i = b; i < e; ++i) {
+        if (text[i] < L'0' || text[i] > L'9') return fallback;
+        v = v * 10 + (text[i] - L'0');
+        if (v > 0x7fffffffLL) return fallback;
+    }
+    if (neg && v != 0) return kDeviceIndexAuto;
+    return static_cast<int>(v);
+}
+
 // Returns the enumeration indices to try, in order.
 //   device_index >= 0 : only that index (empty when out of range)
 //   device_index <  0 : every index 0..count-1 (auto select; first free one wins)

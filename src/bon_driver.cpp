@@ -64,9 +64,11 @@ void BonDriverGVMVPHZ::LoadIni() {
         ini += L".ini";
     }
 
-    // GetPrivateProfileIntW parses a leading '-' so DeviceIndex=-1 comes back as -1.
-    cfg_.device_index = static_cast<int>(GetPrivateProfileIntW(kIniSection, L"DeviceIndex", 0, ini.c_str()));
-    if (cfg_.device_index < 0) cfg_.device_index = kDeviceIndexAuto;
+    // Read as a string and parse it ourselves so that negative values
+    // (DeviceIndex=-1) do not depend on GetPrivateProfileIntW's UINT return.
+    wchar_t idx_buf[32]{};
+    GetPrivateProfileStringW(kIniSection, L"DeviceIndex", L"0", idx_buf, 32, ini.c_str());
+    cfg_.device_index = ParseDeviceIndex(idx_buf, 0);
     cfg_.urb_count = ClampUrbCount(
         static_cast<int>(GetPrivateProfileIntW(kIniSection, L"UrbCount", static_cast<INT>(kDefaultUrbCount), ini.c_str())),
         kDefaultUrbCount);

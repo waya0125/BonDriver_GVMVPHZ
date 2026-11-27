@@ -34,6 +34,22 @@ void TestCandidateOrder() {
     CHECK(CandidateOrder(0, kDeviceIndexAuto).empty());
 }
 
+void TestParseDeviceIndex() {
+    CHECK(ParseDeviceIndex(L"0", 0) == 0);
+    CHECK(ParseDeviceIndex(L"2", 0) == 2);
+    CHECK(ParseDeviceIndex(L" 3\t", 0) == 3);
+    CHECK(ParseDeviceIndex(L"+1", 0) == 1);
+    CHECK(ParseDeviceIndex(L"-1", 0) == kDeviceIndexAuto);
+    CHECK(ParseDeviceIndex(L" -1 ", 0) == kDeviceIndexAuto);
+    CHECK(ParseDeviceIndex(L"-7", 0) == kDeviceIndexAuto);
+    CHECK(ParseDeviceIndex(L"-0", 0) == 0);
+    CHECK(ParseDeviceIndex(L"", 0) == 0);
+    CHECK(ParseDeviceIndex(L"-", 0) == 0);
+    CHECK(ParseDeviceIndex(L"abc", 0) == 0);
+    CHECK(ParseDeviceIndex(L"1x", 0) == 0);
+    CHECK(ParseDeviceIndex(L"99999999999", 0) == 0);
+}
+
 void TestUrbClamp() {
     CHECK(ClampUrbCount(8, 8) == 8);
     CHECK(ClampUrbCount(0, 8) == 8);
@@ -95,6 +111,7 @@ void TestSpeedName() {
 
 int main() {
     TestCandidateOrder();
+    TestParseDeviceIndex();
     TestUrbClamp();
     TestAlignUrbSize();
     TestTrackDevicePath();
