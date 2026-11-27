@@ -4,6 +4,22 @@ project(BonDriver_GVMVPHZ LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+enable_testing()
+
+# Platform independent unit tests (device selection / bulk sizing helpers).
+add_executable(test_core tests/test_core.cpp)
+if(MSVC)
+    target_compile_options(test_core PRIVATE /W4 /utf-8)
+else()
+    target_compile_options(test_core PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME test_core COMMAND test_core)
+
+if(NOT WIN32)
+    message(STATUS "Non-Windows host: building unit tests only (the BonDriver DLL requires Windows)")
+    return()
+endif()
+
 add_library(BonDriver_GVMVPHZ SHARED
     src/dllmain.cpp
     src/bon_driver.cpp
@@ -44,4 +60,8 @@ if(MSVC)
     target_compile_options(bon_test PRIVATE /W4 /utf-8)
 else()
     target_compile_options(bon_test PRIVATE -Wall -Wextra)
+endif()
+if(MINGW)
+    # bon_test uses wmain().
+    target_link_options(bon_test PRIVATE -municode)
 endif()

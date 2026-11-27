@@ -20,6 +20,29 @@ std::wstring ToLower(std::wstring s) {
     return s;
 }
 
+// Layout-compatible copy of WINUSB_PIPE_INFORMATION_EX (winusbio.h). Declared
+// here so that the build does not depend on NTDDI_VERSION >= NTDDI_WINBLUE.
+struct PipeInfoExCompat {
+    USBD_PIPE_TYPE PipeType;
+    UCHAR PipeId;
+    USHORT MaximumPacketSize;
+    UCHAR Interval;
+    ULONG MaximumBytesPerInterval;
+};
+
+using QueryPipeExFn = BOOL(WINAPI *)(WINUSB_INTERFACE_HANDLE, UCHAR, UCHAR, PipeInfoExCompat *);
+
+// WinUsb_QueryPipeEx exists only on Windows 8.1 and later. Resolve it at run
+// time so that the DLL still loads on Windows 7 (static import would fail).
+QueryPipeExFn ResolveQueryPipeEx() {
+    static const QueryPipeExFn fn = []() -> QueryPipeExFn {
+        HMODULE h = GetModuleHandleW(L"winusb.dll");
+        if (!h) return nullptr;
+        return reinterpret_cast<QueryPipeExFn>(reinterpret_cast<void *>(GetProcAddress(h, "WinUsb_QueryPipeEx")));
+    }();
+    return fn;
+}
+
 bool MatchesVidPid(const std::wstring &path, uint16_t vid, uint16_t pid) {
     wchar_t needle[32];
     swprintf_s(needle, L"vid_%04x&pid_%04x", vid, pid);
@@ -89,13 +112,17 @@ bool WinUsbDevice::Open(const std::wstring &device_path, bool claim_stream_if) {
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
         nullptr);
     if (dev_handle_ == INVALID_HANDLE_VALUE) {
+        last_open_error_ = GetLastError();
         return false;
     }
 
     if (!WinUsb_Initialize(dev_handle_, &winusb_if0_)) {
+        DWORD err = GetLastError();
         Close();
+        last_open_error_ = err;
         return false;
     }
+    last_open_error_ = ERROR_SUCCESS;
 
     USB_DEVICE_DESCRIPTOR desc{};
     ULONG transferred = 0;
@@ -156,6 +183,58 @@ WINUSB_INTERFACE_HANDLE WinUsbDevice::HandleForEndpoint(uint8_t ep) const {
         return winusb_if2_;
     }
     return winusb_if0_;
+}
+
+bool WinUsbDevice::QueryDeviceSpeed(uint8_t *speed_out) const {
+    if (!winusb_if0_ || !speed_out) return false;
+    UCHAR speed = 0;
+    ULONG len = sizeof(speed);
+    if (!WinUsb_QueryDeviceInformation(winusb_if0_, DEVICE_SPEED, &len, &speed) || len < 1) {
+        return false;
+    }
+    *speed_out = static_cast<uint8_t>(speed);
+    return true;
+}
+
+bool WinUsbDevice::QueryPipeInfo(uint8_t ep, UsbPipeInfo *out) const {
+    if (!out) return false;
+    *out = UsbPipeInfo{};
+    WINUSB_INTERFACE_HANDLE h = HandleForEndpoint(ep);
+    if (!h) return false;
+
+    USB_INTERFACE_DESCRIPTOR if_desc{};
+    if (!WinUsb_QueryInterfaceSettings(h, 0, &if_desc)) return false;
+
+    for (UCHAR idx = 0; idx < if_desc.bNumEndpoints; ++idx) {
+        WINUSB_PIPE_INFORMATION basic{};
+        if (!WinUsb_QueryPipe(h, 0, idx, &basic) || basic.PipeId != ep) continue;
+
+        out->found = true;
+        out->pipe_type = static_cast<uint8_t>(basic.PipeType);
+        out->pipe_id = basic.PipeId;
+        out->max_packet_size = basic.MaximumPacketSize;
+        out->interval = basic.Interval;
+
+        if (QueryPipeExFn query_ex = ResolveQueryPipeEx()) {
+            PipeInfoExCompat ex{};
+            if (query_ex(h, 0, idx, &ex) && ex.PipeId == ep) {
+                out->ex_available = true;
+                out->pipe_type = static_cast<uint8_t>(ex.PipeType);
+                out->max_packet_size = ex.MaximumPacketSize;
+                out->interval = ex.Interval;
+                out->max_bytes_per_interval = ex.MaximumBytesPerInterval;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+UsbLinkInfo WinUsbDevice::QueryLinkInfo(uint8_t ep) const {
+    UsbLinkInfo info;
+    info.speed_valid = QueryDeviceSpeed(&info.speed);
+    QueryPipeInfo(ep, &info.pipe);
+    return info;
 }
 
 bool WinUsbDevice::ControlTransfer(uint8_t req_type, uint8_t request, uint16_t value, uint16_t index,

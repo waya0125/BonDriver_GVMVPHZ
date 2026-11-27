@@ -77,7 +77,11 @@ private:
 };
 
 bool IsDFUDevice(WinUsbDevice *dev);
-bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path);
+// Boots the SAA7164 firmware on the device at target_path (two-stage DFU).
+// On success *ready_path_out receives the device path to open afterwards
+// (normally the same as target_path).
+bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path,
+                  const std::wstring &target_path, std::wstring *ready_path_out);
 
 } // namespace saa7164
 } // namespace gvmvphz
