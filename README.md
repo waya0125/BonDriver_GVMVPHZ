@@ -42,12 +42,38 @@ WinUSB で機器を直接操作するので、純正ドライバーは不要で�
    - 電源を入れた直後（コールド・DFU 状態）でも、DLL が自動で転送します。
 3. **TVTest・EDCB に置く**
    - `BonDriver_GVMVPHZ.dll`（使うアプリに合わせて x64 か x86）を、TVTest や EDCB の BonDriver のフォルダーにコピーします。
+4. **（必要なら）INI を置く**
+   - 複数台つなぐ場合や転送の設定を変える場合は、[`BonDriver_GVMVPHZ.ini.sample`](./BonDriver_GVMVPHZ.ini.sample) を DLL と同じ名前の `.ini`（例: `BonDriver_GVMVPHZ.ini`）にして、DLL と同じフォルダーに置きます。  
+     INI が無い場合は 1 台目の機器を使います（これまでと同じ動き）。
 
 ## 使い方
 
 - チャンネル空間は `UHF`（13ch〜62ch）の 1 つです。  
   TVTest でチャンネルスキャンをしてから使ってください。
 - TVTest・EDCB 側の B-CAS カードリーダーの設定は不要です。
+
+### 複数台をつなぐ場合
+
+INI の `[GVMVPHZ]` セクションの `DeviceIndex` で、使う機器を選びます。
+
+| 値 | 動き |
+| --- | --- |
+| `0` 以上 | Windows が列挙した順番で、その番号の機器を開きます（0 始まり）。 |
+| `-1` | ほかのアプリが使っていない機器を、列挙順に探して開きます。 |
+
+- EDCB などで複数台を同時に使う場合は、DLL を `BonDriver_GVMVPHZ-0.dll`・`BonDriver_GVMVPHZ-1.dll` のようにコピーし、それぞれに同じ名前の INI を置きます。全部 `DeviceIndex=-1` にしておけば、開いた順に空いている機器が割り当てられます。
+- 「使っているかどうか」は、WinUSB が同時に 1 つのアプリからしか開けないことを利用して判定しています（開けなかった機器は使用中として飛ばします）。
+- 列挙の順番は、つなぐ USB ポートを変えると入れ替わることがあります。決まった機器を使いたい場合は、ポートを固定してください。
+
+### 動作ログ（USB 速度・転送パラメータの確認）
+
+DLL は、開いた機器の情報を `OutputDebugString` で出力します。  
+[DebugView](https://learn.microsoft.com/sysinternals/downloads/debugview)（Sysinternals）で `[BonDriver_GVMVPHZ]` の行を見ると、次のことを確認できます。
+
+- どの機器（何番目）を開いたか、開けなかった機器のエラー番号
+- USB の接続速度（`WinUsb_QueryDeviceInformation(DEVICE_SPEED)`）。`HighSpeed` 以外の場合は警告が出ます（TS 約 17〜23Mbps が入らないため）。
+- TS エンドポイント `0x83` の種類・`wMaxPacketSize` など（Windows 8.1 以降は `WinUsb_QueryPipeEx`、それより前は `WinUsb_QueryPipe`）
+- 実際に使う Bulk 転送の数とサイズ（`UrbSize` が `wMaxPacketSize` の倍数でない場合は切り上げます）
 
 ## ビルド（Windows / Visual Studio）
 
@@ -59,6 +85,12 @@ cmake --build build-x64 --config Release
 # x86
 cmake -B build-x86 -A Win32
 cmake --build build-x86 --config Release
+```
+
+単体テスト（機器が無くても動く部分）は、Linux でも Windows でも `ctest` で実行できます。
+
+```sh
+cmake -B build && cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
 外部のライブラリは不要です（Windows 標準の `winusb.lib` / `setupapi.lib` / `bcrypt.lib` だけを使います）。  

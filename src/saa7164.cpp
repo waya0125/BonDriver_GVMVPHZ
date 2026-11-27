@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 waya0125
 #include "saa7164.h"
+#include "device_select.h"
 
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <set>
 #include <thread>
 
 namespace gvmvphz {
@@ -309,8 +312,9 @@ bool IsDFUDevice(WinUsbDevice *dev) {
     return has_dfu(p2) || has_dfu(p3) || ip.rfind("01", 0) == 0;
 }
 
-bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path) {
-    std::ifstream ifs(fw_path, std::ios::binary | std::ios::ate);
+bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path,
+                  const std::wstring &target_path, std::wstring *ready_path_out) {
+    std::ifstream ifs(std::filesystem::path(fw_path), std::ios::binary | std::ios::ate);
     if (!ifs) return false;
     std::streamsize sz = ifs.tellg();
     if (sz < 0x20000) return false;
@@ -326,18 +330,31 @@ bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path) {
                    static_cast<size_t>(ReadLE32(fw.data() + off2 + 4)) + 1) << 4;
     if (off2 + len2 > fw.size()) return false;
 
+    // Only ever touch the selected device (never devs[0]): with several units
+    // connected, the others may be in use by another BonDriver instance.
+    std::wstring target = target_path;
+    std::set<std::wstring> known;
+    for (const auto &d : EnumerateWinUsbDevices(vid, pid)) known.insert(LowerPath(d.path));
+    known.insert(LowerPath(target));
+
+    auto enum_paths = [&]() {
+        std::vector<std::wstring> paths;
+        for (const auto &d : EnumerateWinUsbDevices(vid, pid)) paths.push_back(d.path);
+        return paths;
+    };
+
     for (int attempt = 0; attempt < 4; ++attempt) {
-        auto devs = EnumerateWinUsbDevices(vid, pid);
-        if (devs.empty()) {
+        if (!TrackDevicePath(enum_paths(), &target, &known)) {
             SleepMs(500);
             continue;
         }
         WinUsbDevice dev;
-        if (!dev.Open(devs[0].path, false)) {
+        if (!dev.Open(target, false)) {
             SleepMs(500);
             continue;
         }
         if (dev.BcdDevice() == 0x0100 && !IsDFUDevice(&dev)) {
+            if (ready_path_out) *ready_path_out = target;
             return true;
         }
         std::string iprod = dev.ReadStringDescAscii(0x20);
@@ -358,13 +375,15 @@ bool BootFirmware(uint16_t vid, uint16_t pid, const std::wstring &fw_path) {
     }
 
     for (int i = 0; i < 10; ++i) {
-        auto devs = EnumerateWinUsbDevices(vid, pid);
-        if (!devs.empty()) {
+        if (TrackDevicePath(enum_paths(), &target, &known)) {
             WinUsbDevice dev;
-            if (dev.Open(devs[0].path, false)) {
+            if (dev.Open(target, false)) {
                 bool ready = (dev.BcdDevice() == 0x0100 && !IsDFUDevice(&dev));
                 dev.Close();
-                if (ready) return true;
+                if (ready) {
+                    if (ready_path_out) *ready_path_out = target;
+                    return true;
+                }
             }
         }
         SleepMs(500);

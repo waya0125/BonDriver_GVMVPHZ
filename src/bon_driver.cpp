@@ -4,6 +4,8 @@
 #include "saigawa.h"
 
 #include <chrono>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <thread>
@@ -13,14 +15,65 @@ namespace gvmvphz {
 namespace {
 
 constexpr uint8_t kStreamEndpoint = 0x83;
-constexpr size_t kUrbCount = 8;
-constexpr size_t kUrbSize = 32768;
+constexpr size_t kDefaultUrbCount = 8;
+constexpr size_t kDefaultUrbSize = 32768;
 constexpr size_t kMaxQueueChunks = 256;
 constexpr DWORD kNumUhfChannels = 50; // UHF 13..62
+constexpr uint8_t kPipeTypeBulk = 2;  // USBD_PIPE_TYPE::UsbdPipeTypeBulk
+constexpr const wchar_t *kIniSection = L"GVMVPHZ";
+
+// Diagnostics go to OutputDebugString (view with Sysinternals DebugView).
+void DebugLog(const wchar_t *fmt, ...) {
+    wchar_t buf[512];
+    int n = swprintf(buf, 512, L"[BonDriver_GVMVPHZ] ");
+    if (n < 0) n = 0;
+    va_list ap;
+    va_start(ap, fmt);
+    vswprintf(buf + n, 512 - static_cast<size_t>(n) - 2, fmt, ap);
+    va_end(ap);
+    buf[510] = L'\0';
+    size_t len = wcslen(buf);
+    buf[len] = L'\n';
+    buf[len + 1] = L'\0';
+    OutputDebugStringW(buf);
+}
 
 } // namespace
 
-BonDriverGVMVPHZ::BonDriverGVMVPHZ(HMODULE hmodule) : hmodule_(hmodule) {}
+BonDriverGVMVPHZ::BonDriverGVMVPHZ(HMODULE hmodule) : hmodule_(hmodule) {
+    LoadIni();
+}
+
+// Reads BonDriver_GVMVPHZ.ini (same folder / base name as the DLL, so a
+// renamed copy such as BonDriver_GVMVPHZ-1.dll reads BonDriver_GVMVPHZ-1.ini).
+void BonDriverGVMVPHZ::LoadIni() {
+    cfg_ = Config{};
+    cfg_.urb_count = kDefaultUrbCount;
+    cfg_.urb_size = kDefaultUrbSize;
+    if (!hmodule_) return;
+
+    wchar_t path[MAX_PATH]{};
+    DWORD n = GetModuleFileNameW(hmodule_, path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::wstring ini(path);
+    const size_t slash = ini.find_last_of(L"\\/");
+    const size_t dot = ini.rfind(L'.');
+    if (dot != std::wstring::npos && (slash == std::wstring::npos || dot > slash)) {
+        ini.replace(dot, std::wstring::npos, L".ini");
+    } else {
+        ini += L".ini";
+    }
+
+    // GetPrivateProfileIntW parses a leading '-' so DeviceIndex=-1 comes back as -1.
+    cfg_.device_index = static_cast<int>(GetPrivateProfileIntW(kIniSection, L"DeviceIndex", 0, ini.c_str()));
+    if (cfg_.device_index < 0) cfg_.device_index = kDeviceIndexAuto;
+    cfg_.urb_count = ClampUrbCount(
+        static_cast<int>(GetPrivateProfileIntW(kIniSection, L"UrbCount", static_cast<INT>(kDefaultUrbCount), ini.c_str())),
+        kDefaultUrbCount);
+    cfg_.urb_size = ClampUrbSize(
+        static_cast<int>(GetPrivateProfileIntW(kIniSection, L"UrbSize", static_cast<INT>(kDefaultUrbSize), ini.c_str())),
+        kDefaultUrbSize);
+}
 
 BonDriverGVMVPHZ::~BonDriverGVMVPHZ() {
     CloseTuner();
@@ -82,27 +135,100 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
     if (is_open_) return TRUE;
 
     auto devs = EnumerateWinUsbDevices(kVendorID, kProductID);
-    if (devs.empty()) return FALSE;
-
-    std::wstring dev_path = devs[0].path;
-    bool need_dfu = false;
-    {
-        WinUsbDevice probe;
-        if (!probe.Open(dev_path, false)) return FALSE;
-        need_dfu = (probe.BcdDevice() != 0x0100) || saa7164::IsDFUDevice(&probe);
+    const auto order = CandidateOrder(devs.size(), cfg_.device_index);
+    if (order.empty()) {
+        DebugLog(L"no device for DeviceIndex=%d (%lu connected)", cfg_.device_index,
+                 static_cast<unsigned long>(devs.size()));
+        return FALSE;
     }
 
-    if (need_dfu) {
-        std::wstring fw_path = ResolveFirmwarePath();
-        if (fw_path.empty()) return FALSE;
-        if (!saa7164::BootFirmware(kVendorID, kProductID, fw_path)) return FALSE;
-        devs = EnumerateWinUsbDevices(kVendorID, kProductID);
-        if (devs.empty()) return FALSE;
-        dev_path = devs[0].path;
+    std::wstring fw_path;
+    for (size_t idx : order) {
+        std::wstring dev_path = devs[idx].path;
+
+        // A device opened by another process (another TVTest / EDCB instance)
+        // cannot be opened again because WinUSB is exclusive; skip it.
+        bool need_dfu = false;
+        {
+            WinUsbDevice probe;
+            if (!probe.Open(dev_path, false)) {
+                DebugLog(L"device #%lu: open failed (error %lu), in use?", static_cast<unsigned long>(idx),
+                         static_cast<unsigned long>(probe.LastOpenError()));
+                continue;
+            }
+            need_dfu = (probe.BcdDevice() != 0x0100) || saa7164::IsDFUDevice(&probe);
+        }
+
+        if (need_dfu) {
+            if (fw_path.empty()) fw_path = ResolveFirmwarePath();
+            if (fw_path.empty()) {
+                DebugLog(L"device #%lu needs firmware but NXP7164F_052204BB.bin was not found",
+                         static_cast<unsigned long>(idx));
+                return FALSE;
+            }
+            std::wstring ready_path;
+            if (!saa7164::BootFirmware(kVendorID, kProductID, fw_path, dev_path, &ready_path)) {
+                DebugLog(L"device #%lu: firmware boot failed", static_cast<unsigned long>(idx));
+                continue;
+            }
+            dev_path = ready_path;
+        }
+
+        if (!OpenDeviceLocked(dev_path)) continue;
+        DebugLog(L"using device #%lu of %lu (DeviceIndex=%d)", static_cast<unsigned long>(idx),
+                 static_cast<unsigned long>(devs.size()), cfg_.device_index);
+        return InitOpenedDeviceLocked() ? TRUE : FALSE;
     }
 
-    if (!usb_.Open(dev_path, true)) return FALSE;
+    DebugLog(L"no usable device (DeviceIndex=%d, %lu connected)", cfg_.device_index,
+             static_cast<unsigned long>(devs.size()));
+    return FALSE;
+}
 
+bool BonDriverGVMVPHZ::OpenDeviceLocked(const std::wstring &path) {
+    if (!usb_.Open(path, true)) {
+        DebugLog(L"open failed (error %lu)", static_cast<unsigned long>(usb_.LastOpenError()));
+        return false;
+    }
+
+    // Check the bulk stream parameters against what WinUSB reports.
+    const UsbLinkInfo link = usb_.QueryLinkInfo(kStreamEndpoint);
+    if (link.speed_valid) {
+        DebugLog(L"USB speed: %ls (%u)", UsbSpeedName(link.speed), static_cast<unsigned>(link.speed));
+        if (link.speed != kUsbSpeedHigh) {
+            DebugLog(L"WARNING: not connected at High-Speed; the TS stream (~17-23 Mbps) will not fit");
+        }
+    } else {
+        DebugLog(L"USB speed: unknown (WinUsb_QueryDeviceInformation failed)");
+    }
+
+    uint16_t max_packet = 0;
+    if (link.pipe.found) {
+        max_packet = link.pipe.max_packet_size;
+        DebugLog(L"EP 0x%02X: type=%u wMaxPacketSize=%u interval=%u maxBytesPerInterval=%lu (%ls)",
+                 static_cast<unsigned>(link.pipe.pipe_id), static_cast<unsigned>(link.pipe.pipe_type),
+                 static_cast<unsigned>(link.pipe.max_packet_size), static_cast<unsigned>(link.pipe.interval),
+                 static_cast<unsigned long>(link.pipe.max_bytes_per_interval),
+                 link.pipe.ex_available ? L"WinUsb_QueryPipeEx" : L"WinUsb_QueryPipe");
+        if (link.pipe.pipe_type != kPipeTypeBulk) {
+            DebugLog(L"WARNING: EP 0x%02X is not a bulk pipe", static_cast<unsigned>(kStreamEndpoint));
+        }
+    } else {
+        DebugLog(L"EP 0x%02X: pipe information not available", static_cast<unsigned>(kStreamEndpoint));
+    }
+
+    stream_urb_size_ = AlignUrbSize(cfg_.urb_size, max_packet);
+    if (stream_urb_size_ != cfg_.urb_size) {
+        DebugLog(L"UrbSize %lu is not a multiple of wMaxPacketSize %u; using %lu",
+                 static_cast<unsigned long>(cfg_.urb_size), static_cast<unsigned>(max_packet),
+                 static_cast<unsigned long>(stream_urb_size_));
+    }
+    DebugLog(L"bulk stream: %lu URBs x %lu bytes", static_cast<unsigned long>(cfg_.urb_count),
+             static_cast<unsigned long>(stream_urb_size_));
+    return true;
+}
+
+bool BonDriverGVMVPHZ::InitOpenedDeviceLocked() {
     // Drain any stale interrupt messages on EP 0x81.
     uint8_t drain[saa7164::kMaxMessage];
     for (int i = 0; i < 16; ++i) {
@@ -115,7 +241,7 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
     client_->SetState(8, saa7164::kStatePause);
     client_->SetState(8, saa7164::kStateAcquire);
     client_->SetState(8, saa7164::kStateStop);
-    std::vector<uint8_t> ep_drain(kUrbSize);
+    std::vector<uint8_t> ep_drain(stream_urb_size_);
     for (int i = 0; i < 8; ++i) {
         if (!usb_.ReadPipe(kStreamEndpoint, ep_drain.data(), static_cast<uint32_t>(ep_drain.size()), 30)) break;
     }
@@ -127,7 +253,7 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
     if (!saigawa::ReadLock(client_.get(), &r80, &rb0, &locked)) {
         if (!saigawa::Init(client_.get())) {
             CloseTunerLocked();
-            return FALSE;
+            return false;
         }
         client_->InitInternalBCAS();
     }
@@ -139,19 +265,19 @@ const BOOL BonDriverGVMVPHZ::OpenTuner(void) {
         session_id_ = 1;
         if (!ivdrm::RunAuth(client_.get(), 1, &session_key_)) {
             CloseTunerLocked();
-            return FALSE;
+            return false;
         }
     }
 
     if (!watchdog_.Start(client_.get(), session_key_)) {
         ivdrm::CloseSession(client_.get(), session_id_);
         CloseTunerLocked();
-        return FALSE;
+        return false;
     }
 
     decryptor_ = std::make_unique<ivdrm::TSDecryptor>(session_key_);
     is_open_ = true;
-    return TRUE;
+    return true;
 }
 
 void BonDriverGVMVPHZ::StopStreamLocked() {
@@ -206,7 +332,7 @@ const BOOL BonDriverGVMVPHZ::SetChannel(const DWORD dwSpace, const DWORD dwChann
     PurgeTsStream();
 
     if (!streaming_) {
-        if (!usb_.StartBulkStream(kStreamEndpoint, kUrbCount, kUrbSize,
+        if (!usb_.StartBulkStream(kStreamEndpoint, cfg_.urb_count, stream_urb_size_,
                                   [this](const uint8_t *data, size_t len) { OnRawChunk(data, len); })) {
             return FALSE;
         }

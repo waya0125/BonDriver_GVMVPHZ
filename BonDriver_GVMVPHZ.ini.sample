@@ -1,0 +1,19 @@
+; BonDriver_GVMVPHZ の設定ファイル（サンプル）
+; DLL と同じフォルダーに、DLL と同じ名前で拡張子を .ini にして置きます。
+;   例: BonDriver_GVMVPHZ.dll   -> BonDriver_GVMVPHZ.ini
+;       BonDriver_GVMVPHZ-1.dll -> BonDriver_GVMVPHZ-1.ini
+; ファイルが無い場合は、すべて下の既定値で動きます。
+
+[GVMVPHZ]
+; 複数台つないでいるときに使う機器
+;   0 以上 : その番号の機器を開く（0 始まり。Windows が列挙した順番）
+;   -1     : ほかのアプリが使っていない機器を自動で選ぶ
+; 既定は 0（1 台目）
+DeviceIndex=0
+
+; ---- 以下は通常は変更不要（Bulk 転送の調整用）----
+; TS 受信に同時に出しておく Bulk 転送の数（1〜64、既定 8）
+;UrbCount=8
+; Bulk 転送 1 回あたりのバイト数（512〜1048576、既定 32768）
+; エンドポイントの wMaxPacketSize の倍数でない場合は、倍数に切り上げて使います
+;UrbSize=32768

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "IBonDriver2.h"
+#include "device_select.h"
 #include "ivdrm.h"
 #include "saa7164.h"
 #include "winusb_dev.h"
@@ -45,12 +46,23 @@ public:
     void Release(void) override;
 
 private:
+    struct Config {
+        int device_index = 0;      // >= 0: fixed index, -1: first free device
+        size_t urb_count = 8;
+        size_t urb_size = 32768;
+    };
+
+    void LoadIni();
     std::wstring ResolveFirmwarePath() const;
+    bool OpenDeviceLocked(const std::wstring &path);
+    bool InitOpenedDeviceLocked();
     void StopStreamLocked();
     void CloseTunerLocked();
     void OnRawChunk(const uint8_t *data, size_t len);
 
     HMODULE hmodule_ = nullptr;
+    Config cfg_;
+    size_t stream_urb_size_ = 32768; // cfg_.urb_size aligned to wMaxPacketSize
     std::mutex api_mu_;
 
     WinUsbDevice usb_;
